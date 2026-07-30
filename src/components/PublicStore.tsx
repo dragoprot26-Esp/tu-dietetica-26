@@ -721,6 +721,14 @@ export const PublicStore: React.FC = () => {
                   <ShoppingBag className="w-4 h-4" />
                   {t.addToCart}
                 </button>
+
+                {/* Botón Cerrar abajo (siempre visible en el móvil) */}
+                <button
+                  onClick={() => setSelectedProduct(null)}
+                  className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 font-semibold rounded-xl text-sm transition-all active:scale-95 mt-2 border border-stone-700"
+                >
+                  Cerrar
+                </button>
               </div>
 
             </div>
