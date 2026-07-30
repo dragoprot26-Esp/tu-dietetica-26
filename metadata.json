@@ -1,0 +1,6 @@
+{
+  "name": "Tu Dietética",
+  "description": "PWA Multi-inquilino para dietéticas y tiendas naturales con catálogo dinámico, canasto con códigos de retiro, panel de administración con inventario, dashboard con exportación a planilla, colaboradores, reseñas y personalización de temas estilo Nueva York.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

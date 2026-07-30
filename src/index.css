@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .font-playfair {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+  .font-jakarta {
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+  .font-space {
+    font-family: 'Space Grotesk', monospace, sans-serif;
+  }
+}
+
+/* Custom Scrollbar for New York Style feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 113, 108, 0.3);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 113, 108, 0.5);
+}
+
+/* Print styles for QR Code printing */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-qr-section, #printable-qr-section * {
+    visibility: visible;
+  }
+  #printable-qr-section {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}
