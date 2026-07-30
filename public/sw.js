@@ -4,7 +4,7 @@
  *  - Supabase / fuentes / otros orígenes: pasan de largo (no se cachean).
  * Subir la versión (CACHE) limpia lo viejo al publicar cambios.
  */
-const CACHE = 'diet-v2';
+const CACHE = 'diet-v3';
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
