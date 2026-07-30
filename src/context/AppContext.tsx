@@ -603,19 +603,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const code = cloudCodeRef.current;
     let lastVer = '';
     let stop = false;
-    const traer = async () => {
-      const ver = await cloud.dietVersion(code);
-      if (stop || !ver || ver === lastVer) return;
-      lastVer = ver;
+    // forzar=true → baja SIEMPRE (al volver a la app). forzar=false → solo si
+    // cambió la versión (poll liviano). Si la versión viene '__unknown__'
+    // (función ausente), igual baja para no trabar el sync.
+    const bajar = async (forzar = false) => {
+      if (stop) return;
+      if (!forzar) {
+        const ver = await cloud.dietVersion(code);
+        if (!ver) return;
+        if (ver !== '__unknown__' && ver === lastVer) return;
+        lastVer = ver;
+      }
       const remote = await cloud.cloudLoad(code);
       if (!remote) return;
       const unir = (loc: any[], rem: any[]) => { const m = new Map<string, any>(); (rem || []).forEach(x => { if (x && x.id) m.set(x.id, x); }); (loc || []).forEach(x => { if (x && x.id) m.set(x.id, x); }); return Array.from(m.values()); };
       if (Array.isArray(remote.orders)) setOrdersState(prev => { const mg = unir(prev, remote.orders as any[]); return JSON.stringify(mg) === JSON.stringify(prev) ? prev : (StorageService.saveOrders(mg), mg); });
       if (Array.isArray(remote.reviews)) setReviewsState(prev => { const mg = unir(prev, remote.reviews as any[]); return JSON.stringify(mg) === JSON.stringify(prev) ? prev : (StorageService.saveReviews(mg), mg); });
     };
-    const iv = setInterval(traer, 12000);
+    bajar(true);
+    const iv = setInterval(() => bajar(false), 12000);
     let ultimo = 0;
-    const thr = () => { const n = Date.now(); if (n - ultimo < 4000) return; ultimo = n; traer(); };
+    const thr = () => { const n = Date.now(); if (n - ultimo < 3000) return; ultimo = n; bajar(true); };
     const alVolver = () => { if (document.visibilityState === 'visible') thr(); };
     document.addEventListener('visibilitychange', alVolver);
     window.addEventListener('focus', thr);
