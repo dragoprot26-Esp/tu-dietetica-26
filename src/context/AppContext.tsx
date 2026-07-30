@@ -621,7 +621,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (Array.isArray(remote.reviews)) setReviewsState(prev => { const mg = unir(prev, remote.reviews as any[]); return JSON.stringify(mg) === JSON.stringify(prev) ? prev : (StorageService.saveReviews(mg), mg); });
     };
     bajar(true);
-    const iv = setInterval(() => bajar(false), 12000);
+    // Sondeo INCONDICIONAL cada 9s: baja de la nube sí o sí (no depende de la
+    // versión ni del foco). Garantiza que el encargo aparezca aunque el equipo
+    // que lo recibe no reciba eventos de foco.
+    const iv = setInterval(() => bajar(true), 9000);
     let ultimo = 0;
     const thr = () => { const n = Date.now(); if (n - ultimo < 3000) return; ultimo = n; bajar(true); };
     const alVolver = () => { if (document.visibilityState === 'visible') thr(); };
