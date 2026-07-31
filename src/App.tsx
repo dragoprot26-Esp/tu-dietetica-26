@@ -11,7 +11,34 @@ import { Eye, Shield, Store } from 'lucide-react';
 
 const MainLayout: React.FC = () => {
   const { session } = useApp();
-  const [viewMode, setViewMode] = useState<'public' | 'admin'>('public');
+  // Al recargar: si había panel abierto (dueño/colaborador logueado), arrancamos
+  // en el panel y NO salimos a la página pública hasta que toque "Salir".
+  const [viewMode, setViewMode] = useState<'public' | 'admin'>(() => {
+    try { return localStorage.getItem('diet_panel_view') === '1' ? 'admin' : 'public'; } catch (e) { return 'public'; }
+  });
+
+  // Mientras restaura la sesión (tras recargar), mostramos un cargando breve para
+  // no parpadear a la tienda pública. Si a los 4s no volvió la sesión, sigue normal.
+  const [booting, setBooting] = useState<boolean>(() => {
+    try { return localStorage.getItem('diet_panel_view') === '1'; } catch (e) { return false; }
+  });
+  React.useEffect(() => {
+    if (!booting) return;
+    if (session.isLoggedIn) { setBooting(false); return; }
+    const t = setTimeout(() => setBooting(false), 4000);
+    return () => clearTimeout(t);
+  }, [booting, session.isLoggedIn]);
+
+  if (booting && !session.isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-stone-900 text-stone-100 flex items-center justify-center font-jakarta">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-4 border-stone-700 border-t-amber-500 rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-bold text-amber-400">Abriendo tu panel…</p>
+        </div>
+      </div>
+    );
+  }
 
   // If user is logged in and mode is 'admin', show Admin Panel
   if (session.isLoggedIn && viewMode === 'admin') {
