@@ -537,7 +537,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     cloudCodeRef.current = null;
     try { cloud.signOut(); } catch (e) { /* noop */ }
+    try { localStorage.removeItem('diet_panel_view'); } catch (e) { /* noop */ }
   };
+
+  // Recordar que hay panel abierto: al recargar el móvil, el dueño/colaborador
+  // NO sale a la página pública; sigue en el panel hasta que toque "Salir".
+  // Solo se activa al entrar; se borra únicamente en logout (no en una recarga).
+  useEffect(() => {
+    try { if (session.isLoggedIn) localStorage.setItem('diet_panel_view', '1'); } catch (e) { /* noop */ }
+  }, [session.isLoggedIn]);
 
   // ── Arranque: página pública por ?codigo o restaurar sesión admin ──────
   useEffect(() => {
