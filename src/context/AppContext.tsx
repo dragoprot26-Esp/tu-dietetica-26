@@ -594,10 +594,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const mergedReviews = unir(reviews, (remote && remote.reviews) || []);
         if (JSON.stringify(mergedOrders) !== JSON.stringify(orders)) { suspendSaveRef.current = true; setOrdersState(mergedOrders); StorageService.saveOrders(mergedOrders); suspendSaveRef.current = false; }
         if (JSON.stringify(mergedReviews) !== JSON.stringify(reviews)) { suspendSaveRef.current = true; setReviewsState(mergedReviews); StorageService.saveReviews(mergedReviews); suspendSaveRef.current = false; }
+        // CANDADO ANTI-BORRADO: si local NO tiene productos/colaboradores/dietario
+        // pero la nube SÍ, no pisamos con lista vacía (evita perder datos por una
+        // recarga/carrera). Recuperamos los de la nube.
+        let productsToSave = products;
+        let collabsToSave = collaborators;
+        let dietsToSave = diets;
+        if (productsToSave.length === 0 && remote && Array.isArray(remote.products) && remote.products.length > 0) {
+          productsToSave = remote.products;
+          suspendSaveRef.current = true; setProductsState(productsToSave); StorageService.saveProducts(productsToSave); suspendSaveRef.current = false;
+        }
+        if (collabsToSave.length === 0 && remote && Array.isArray((remote as any).collaborators) && (remote as any).collaborators.length > 0) {
+          collabsToSave = (remote as any).collaborators;
+        }
+        if (dietsToSave.length === 0 && remote && Array.isArray((remote as any).diets) && (remote as any).diets.length > 0) {
+          dietsToSave = (remote as any).diets;
+        }
         await cloud.cloudSave(code, {
-          settings: tenantSettings, products, diets,
+          settings: tenantSettings, products: productsToSave, diets: dietsToSave,
           orders: mergedOrders, reviews: mergedReviews,
-          queries, collaborators, categories: tenantSettings.categories,
+          queries, collaborators: collabsToSave, categories: tenantSettings.categories,
         });
       } catch (e) { /* offline: queda local */ }
     }, 1000);
