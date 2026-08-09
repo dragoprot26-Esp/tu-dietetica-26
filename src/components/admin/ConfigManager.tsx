@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import * as cloud from '../../services/cloud';
 import { useApp } from '../../context/AppContext';
 import { QrCode, Printer, MapPin, Phone, Database, Lock, Check, RefreshCw, Eye, Download, AlertCircle } from 'lucide-react';
 
@@ -28,6 +29,18 @@ export const ConfigManager: React.FC = () => {
 
   // Molde CyC: el QR apunta a la página pública del local (?codigo=licencia).
   const publicUrl = `${window.location.origin}${window.location.pathname}?codigo=${encodeURIComponent(tenantSettings.id)}`;
+
+  // Suscripción / alquiler: días hasta el vencimiento de la licencia.
+  const [vencAlq, setVencAlq] = useState<string | null>(null);
+  useEffect(() => {
+    let v = true;
+    (async () => {
+      const l = await cloud.validarLicencia(tenantSettings.id || '');
+      if (v && l && l.fecha_vencimiento) setVencAlq(l.fecha_vencimiento);
+    })();
+    return () => { v = false; };
+  }, [tenantSettings.id]);
+  const diasAlq = vencAlq ? Math.ceil((new Date(vencAlq).getTime() - Date.now()) / 86400000) : null;
   const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(publicUrl)}`;
 
   const handlePrintQr = () => {
@@ -71,7 +84,30 @@ export const ConfigManager: React.FC = () => {
 
   return (
     <div className="space-y-8">
-      
+
+      {/* Mi Suscripción: contador de vencimiento + pagar alquiler */}
+      <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold font-playfair text-white">Mi Suscripción</h3>
+            <p className="text-xs text-stone-400 mt-0.5">Licencia <span className="font-mono text-amber-400">{tenantSettings.id}</span></p>
+          </div>
+          <div className="text-center px-5 py-3 rounded-2xl border border-stone-800">
+            {diasAlq === null ? (
+              <span className="text-xs text-stone-500">Consultando…</span>
+            ) : diasAlq < 0 ? (
+              <><span className="block text-2xl font-black text-red-500">Vencida</span><span className="text-[11px] text-red-400">Regularizá tu pago</span></>
+            ) : (
+              <><span className={`block text-3xl font-black ${diasAlq <= 7 ? 'text-orange-400' : 'text-emerald-400'}`}>{diasAlq}</span><span className="text-[11px] text-stone-500">{diasAlq === 1 ? 'día para vencer' : 'días para vencer'}</span></>
+            )}
+          </div>
+        </div>
+        {vencAlq && <p className="text-[11px] text-stone-500">Vence el <strong>{new Date(vencAlq).toLocaleDateString('es-AR')}</strong>.</p>}
+        <a href={`https://cyc-qr-cobros.vercel.app/?codigo=${encodeURIComponent(tenantSettings.id || '')}`} target="_blank" rel="noopener noreferrer" className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 transition">
+          <span>💳</span><span>Pagar mi alquiler</span>
+        </a>
+      </div>
+
       {/* 1. Código QR de la Página Pública (Vista Previa e Imprimir) */}
       <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-stone-800 pb-3">
