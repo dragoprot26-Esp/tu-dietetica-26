@@ -77,11 +77,47 @@ async function signIn(email: string, password: string): Promise<SbSession | null
   if (r.ok && r.data && r.data.access_token) return guardarSesion(r.data);
   return null;
 }
+/**
+ * Renueva la sesión CON CANDADO.
+ *
+ * Supabase cambia el refresh_token cada vez que se usa. Sin candado, dos
+ * renovaciones al mismo tiempo (el sondeo + el guardado, o dos pestañas, o el
+ * navegador y la app instalada) hacían que la segunda llegara con un token ya
+ * gastado: la sesión se moría sola y el panel dejaba de sincronizar sin avisar.
+ */
+let refrescando: Promise<SbSession | null> | null = null;
+const LOCK_KEY = 'diet_sb_refresh';
 async function refresh(): Promise<SbSession | null> {
-  const s = sessGet(); if (!s || !s.refresh_token) return null;
-  const r = await authPost('/auth/v1/token?grant_type=refresh_token', { refresh_token: s.refresh_token });
-  if (r.ok && r.data && r.data.access_token) return guardarSesion(r.data);
-  return null;
+  if (refrescando) return refrescando;
+  refrescando = (async () => {
+    const s = sessGet(); if (!s || !s.refresh_token) return null;
+    try {
+      const otra = Number(localStorage.getItem(LOCK_KEY) || 0);
+      if (Date.now() - otra < 4000) {
+        await new Promise((r) => setTimeout(r, 1600));
+        const nueva = sessGet();
+        if (nueva && nueva.refresh_token && nueva.refresh_token !== s.refresh_token) return nueva;
+      }
+      localStorage.setItem(LOCK_KEY, String(Date.now()));
+    } catch (e) { /* modo privado */ }
+    const r = await authPost('/auth/v1/token?grant_type=refresh_token', { refresh_token: sessGet()?.refresh_token || s.refresh_token });
+    if (r.ok && r.data && r.data.access_token) return guardarSesion(r.data);
+    return null;
+  })();
+  try { return await refrescando; }
+  finally { setTimeout(() => { refrescando = null; }, 1500); }
+}
+
+/**
+ * Renueva la sesión ANTES de que venza. El token dura una hora: sin esto, el
+ * panel quedaba abierto, se vencía, y de golpe dejaba de sincronizar o volvía
+ * a pedir la contraseña. Conviene llamarlo cada tanto y al volver a la app.
+ */
+export async function mantenerSesionViva(): Promise<boolean> {
+  const s = sessGet();
+  if (!s) return false;
+  if (((s.expira || 0) - Date.now()) > 15 * 60 * 1000) return true;
+  return !!(await refresh());
 }
 export async function authToken(): Promise<string | null> {
   const s = sessGet(); if (!s) return null;
@@ -95,7 +131,10 @@ export async function signOutGlobal() {
   try {
     const tok = await authToken();
     if (tok) {
-      await fetch(`${SB_URL}/auth/v1/logout?scope=global`, {
+      // scope=local: cierra la sesión SOLO en este dispositivo. Con `global` se
+      // revocaba en TODOS, así que salir en la PC le mataba la sesión del
+      // celular en silencio: el otro panel seguía abierto pero ya no leía nada.
+      await fetch(`${SB_URL}/auth/v1/logout?scope=local`, {
         method: 'POST', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + tok },
       });
     }
@@ -145,20 +184,39 @@ export async function asegurarCuentaSeguraDueno(usuario: string, password: strin
 
 export async function asegurarCuentaSeguraColab(usuario: string, password: string, codigo: string) {
   if (!usuario || !password || !codigo) return { ok: false, msg: 'Faltan datos' };
+  // La comprobación contra el listado del local va SIEMPRE PRIMERO, no solo
+  // cuando falla el inicio de sesión. Antes, a un colaborador dado de baja le
+  // quedaba viva la cuenta y entraba igual: el inicio de sesión funcionaba y
+  // nadie volvía a mirar si seguía en el listado.
+  let habilitado = false;
+  try {
+    const r: any = await rpc('diet_verificar_colab', { p_codigo: codigo, p_usuario: usuario, p_pass: password }, false);
+    habilitado = !!(r === true || (r && r.ok === true));
+  } catch (e) { habilitado = false; }
+  if (!habilitado) {
+    return { ok: false, msg: 'Usuario o contraseña de colaborador incorrectos, o tu acceso fue dado de baja.' };
+  }
+
   const email = emailDe(usuario, codigo);
   let sess = await signIn(email, password);
-  if (!sess) {
-    let ok = false;
-    try { ok = await rpc('diet_verificar_colab', { p_codigo: codigo, p_usuario: usuario, p_pass: password }, false); }
-    catch (e) { ok = false; }
-    if (!ok) return { ok: false, msg: 'Usuario o contrasena de colaborador incorrectos.' };
-    await signUp(email, password);
-    sess = await signIn(email, password);
-  }
-  if (!sess) return { ok: false, msg: 'No se pudo crear la cuenta del colaborador (clave de 6+).' };
-  try { await rpc('diet_unir_colab', { p_codigo: codigo, p_usuario: usuario }); }
+  if (!sess) { await signUp(email, password); sess = await signIn(email, password); }
+  if (!sess) return { ok: false, msg: 'No se pudo crear la cuenta del colaborador (la clave debe tener 6+ caracteres).' };
+  // La contraseña viaja también al unir: ahora la comprueba la función del
+  // servidor. Sin esto, cualquiera con el código de la licencia (que va adentro
+  // del QR) podía anotarse como colaborador de un local ajeno y leerle —y
+  // pisarle— todos los datos.
+  try { await rpc('diet_unir_colab', { p_codigo: codigo, p_usuario: usuario, p_pass: password }); }
   catch (e: any) { return { ok: false, msg: 'No se pudo unir: ' + (e.message || e) }; }
   return { ok: true };
+}
+
+/** Da de baja el acceso de un colaborador: le saca la MEMBRESÍA, no solo el
+ *  usuario del listado. Su cuenta seguía viva y desde el teléfono donde ya
+ *  había entrado seguía leyendo y escribiendo los datos del local. */
+export async function dietBajaColab(codigo: string, usuario: string): Promise<boolean> {
+  if (!codigo || !usuario) return false;
+  try { const r = await rpc('diet_baja_colab', { p_codigo: codigo, p_usuario: usuario }); return !!(r && r.ok); }
+  catch (e) { return false; }
 }
 
 export async function miMembresia(): Promise<{ tenant_id: string; rol: string; usuario: string } | null> {
@@ -173,17 +231,57 @@ export async function miMembresia(): Promise<{ tenant_id: string; rol: string; u
 }
 
 // -- Sync de datos del local (tabla diet_backups, RLS por membresia) --
+/**
+ * Baja los datos del local.
+ *
+ * `null` = NO SE PUDO LEER (sin sesión, sin señal, permiso denegado).
+ * `{}`   = se leyó bien y está GENUINAMENTE vacío (licencia nueva).
+ *
+ * OJO, que acá estuvo el problema que en Boutique borró un catálogo entero:
+ * antes, sin sesión, la consulta salía igual con la clave ANÓNIMA. La regla de
+ * seguridad respondía `[]` con status 200 y esto devolvía `{}`. La app lo tomaba
+ * como "local vacío", sembraba todo en cero y el autoguardado subía ese vacío.
+ * Ahora sin sesión no se pregunta, y cero filas se confirma contra
+ * diet_version (que se puede leer sin permisos): si hay fecha, la fila EXISTE
+ * y lo que falló fue el permiso.
+ */
 export async function cloudLoad(codigo: string): Promise<CloudData | null> {
-  const bearer = (await authToken()) || SB_KEY;
+  diag.ultimoIntento = Date.now();
+  let tok = await authToken();
+  if (!tok) { await refresh(); tok = await authToken(); }
+  diag.tokenVivo = !!tok;
+  if (!tok) { diag.ultimoError = 'sin sesión'; return null; }
   try {
     const res = await fetch(
       `${SB_URL}/rest/v1/diet_backups?tenant_id=eq.${encodeURIComponent(codigo)}&select=datos&limit=1`,
-      { cache: 'no-store', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + bearer } });
-    if (!res.ok) return null;
+      { cache: 'no-store', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + tok } });
+    if (!res.ok) { diag.ultimoError = 'HTTP ' + res.status; return null; }
     const rows = await res.json();
-    return (rows && rows.length && rows[0].datos) ? rows[0].datos as CloudData : {};
-  } catch (e) { return null; }
+    if (!Array.isArray(rows)) { diag.ultimoError = 'respuesta rara'; return null; }
+
+    if (!rows.length) {
+      let v = '';
+      try { v = await dietVersion(codigo); } catch (e) { v = ''; }
+      if (v) { diag.ultimoError = 'sin permiso sobre este local'; return null; }
+      diag.ultimaLectura = Date.now(); diag.ultimoError = '';
+      return {};
+    }
+
+    diag.ultimaLectura = Date.now(); diag.ultimoError = '';
+    return (rows[0].datos || {}) as CloudData;
+  } catch (e) { diag.ultimoError = 'sin conexión'; return null; }
 }
+
+/** Últimos datos del sondeo, para poder ver qué está pasando sin adivinar. */
+export const diag = {
+  ultimaLectura: 0 as number,
+  ultimoIntento: 0 as number,
+  ultimoError: '' as string,
+  tokenVivo: false as boolean,
+};
+
+/** ¿La sesión de nube sigue viva? */
+export async function sesionViva(): Promise<boolean> { return !!(await authToken()); }
 
 export async function cloudSave(codigo: string, datos: CloudData): Promise<boolean> {
   const body = JSON.stringify({ tenant_id: codigo, datos, updated_at: new Date().toISOString() });
@@ -196,7 +294,8 @@ export async function cloudSave(codigo: string, datos: CloudData): Promise<boole
     body,
   });
   try {
-    const tok = (await authToken()) || SB_KEY;
+    const tok = await authToken();
+    if (!tok) return false; // sin sesión no se guarda (ver comentario en cloudLoad)
     let res = await enviar(tok);
     if (res.status === 401 || res.status === 403) {
       const ns = await refresh();
