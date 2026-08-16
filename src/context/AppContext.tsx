@@ -644,19 +644,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (Array.isArray(remote.orders)) setOrdersState(prev => { const mg = unir(prev, remote.orders as any[]); return JSON.stringify(mg) === JSON.stringify(prev) ? prev : (StorageService.saveOrders(mg), mg); });
       if (Array.isArray(remote.reviews)) setReviewsState(prev => { const mg = unir(prev, remote.reviews as any[]); return JSON.stringify(mg) === JSON.stringify(prev) ? prev : (StorageService.saveReviews(mg), mg); });
     };
-    bajar(true);
-    // Sondeo INCONDICIONAL cada 9s: baja de la nube sí o sí (no depende de la
-    // versión ni del foco). Garantiza que el encargo aparezca aunque el equipo
-    // que lo recibe no reciba eventos de foco.
-    const iv = setInterval(() => bajar(true), 9000);
+    // Candado: un solo sondeo a la vez. Si se encimaban, varios pedían renovar
+    // la sesión al mismo tiempo y —como Supabase cambia el token en cada
+    // renovación— la segunda llegaba con uno gastado y la sesión se moría.
+    let sondeando = false;
+    const sondear = async (forzar = false) => {
+      if (sondeando) return;
+      sondeando = true;
+      try { await bajar(forzar); } finally { sondeando = false; }
+    };
+
+    sondear(true);                                // primera consulta INMEDIATA
+
+    // OJO CON ESTO, que cambió: antes el intervalo bajaba TODO el dato del
+    // local cada 9 segundos, sin mirar si algo había cambiado. Con las fotos
+    // adentro, eso son megas y megas por hora por cada panel abierto — es de
+    // las cosas que más consumo de Supabase generan.
+    // Ahora pregunta primero la VERSIÓN (unos pocos bytes) y solo baja el dato
+    // completo si cambió. Si la versión no se puede saber, baja igual, así que
+    // no se pierde ningún encargo.
+    const iv = setInterval(() => sondear(false), 10000);
+
+    // Al volver a la app sí se baja SIEMPRE: es el momento en que el dueño
+    // quiere ver lo último y el celular tuvo los temporizadores congelados.
     let ultimo = 0;
-    const thr = () => { const n = Date.now(); if (n - ultimo < 3000) return; ultimo = n; bajar(true); };
+    const thr = () => { const n = Date.now(); if (n - ultimo < 3000) return; ultimo = n; sondear(true); };
     const alVolver = () => { if (document.visibilityState === 'visible') thr(); };
     document.addEventListener('visibilitychange', alVolver);
     window.addEventListener('focus', thr);
     window.addEventListener('pageshow', thr);
-    document.addEventListener('touchstart', thr, { passive: true });
-    return () => { stop = true; clearInterval(iv); document.removeEventListener('visibilitychange', alVolver); window.removeEventListener('focus', thr); window.removeEventListener('pageshow', thr); document.removeEventListener('touchstart', thr); };
+    // OJO: acá había también un listener de `touchstart`. En el celular eso
+    // dispara con CADA toque de pantalla: se lanzaban sondeos encimados y,
+    // como cada uno podía pedir renovar la sesión, la sesión terminaba
+    // muriendo. Es el mismo problema que en Salón de Uñas A. Sacado a
+    // propósito: con volver a la app y el intervalo alcanza y sobra.
+    return () => { stop = true; clearInterval(iv); document.removeEventListener('visibilitychange', alVolver); window.removeEventListener('focus', thr); window.removeEventListener('pageshow', thr); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.isLoggedIn]);
 
