@@ -125,7 +125,7 @@ export async function authToken(): Promise<string | null> {
   const ns = await refresh();
   return ns ? ns.access_token : null;
 }
-export function signOut() { sessSet(null); }
+export function signOut() { sessSet(null); olvidarCache(); }
 
 export async function signOutGlobal() {
   try {
@@ -245,7 +245,7 @@ export async function miMembresia(): Promise<{ tenant_id: string; rol: string; u
  * diet_version (que se puede leer sin permisos): si hay fecha, la fila EXISTE
  * y lo que falló fue el permiso.
  */
-export async function cloudLoad(codigo: string): Promise<CloudData | null> {
+async function cloudLoadDirecto(codigo: string): Promise<CloudData | null> {
   diag.ultimoIntento = Date.now();
   let tok = await authToken();
   if (!tok) { await refresh(); tok = await authToken(); }
@@ -271,6 +271,52 @@ export async function cloudLoad(codigo: string): Promise<CloudData | null> {
     return (rows[0].datos || {}) as CloudData;
   } catch (e) { diag.ultimoError = 'sin conexión'; return null; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   AHORRO DE CONSUMO (egress de Supabase)
+
+   El respaldo de un local puede pesar varios MEGABYTES, porque las fotos
+   viajan adentro. Y ANTES de cada guardado la app lo baja entero para no
+   pisar los pedidos que entraron desde la página pública.
+
+   O sea que el dueño editando 20 productos seguidos bajaba 20 veces el
+   respaldo completo. Con un respaldo de 6 MB, eso es más de 100 MB en una
+   sola tarde de trabajo — y el plan gratis da 5 GB por mes para TODAS las
+   apps juntas.
+
+   Lo que hacemos acá: guardamos en memoria lo último que bajamos junto con
+   la FECHA de ese momento. Antes de bajar de nuevo preguntamos la fecha
+   (dietVersion, que son unos pocos bytes). Si es la misma, devolvemos la copia
+   que ya teníamos y NO se baja nada.
+
+   Si algo cambió —el mismo dueño desde otro dispositivo, un pedido nuevo
+   del público, un colaborador— la fecha es distinta y se baja igual que
+   siempre. Nunca se trabaja con datos viejos.
+
+   Si la función de fecha no existe en la base, esto queda desactivado solo
+   y todo funciona como antes.
+   ══════════════════════════════════════════════════════════════════════ */
+let _memCod = '';
+let _memVer = '';
+let _memDatos: CloudData | null = null;
+
+/** Borra la copia en memoria (por ejemplo al cerrar sesión). */
+export function olvidarCache() { _memCod = ''; _memVer = ''; _memDatos = null; }
+
+export async function cloudLoad(codigo: string): Promise<CloudData | null> {
+  let v = '';
+  try { v = await dietVersion(codigo); } catch (e) { v = ''; }
+  const sirve = !!(v && v !== '__unknown__');
+  if (sirve && codigo === _memCod && v === _memVer && _memDatos) {
+    diag.ultimaLectura = Date.now(); diag.ultimoError = '';
+    // Copia superficial: si la app tocara el objeto, no ensucia lo guardado.
+    return { ..._memDatos };
+  }
+  const d = await cloudLoadDirecto(codigo);
+  if (d !== null) { _memCod = codigo; _memVer = sirve ? v : ''; _memDatos = { ...d }; }
+  return d;
+}
+
 
 /** Últimos datos del sondeo, para poder ver qué está pasando sin adivinar. */
 export const diag = {
@@ -301,7 +347,15 @@ export async function cloudSave(codigo: string, datos: CloudData): Promise<boole
       const ns = await refresh();
       if (ns && ns.access_token) res = await enviar(ns.access_token);
     }
-    return res.ok;
+    const _guardo = res.ok;
+    // Guardamos en memoria lo que acabamos de subir junto con su fecha
+    // nueva: así el próximo guardado no tiene que volver a bajarlo.
+    if (_guardo) {
+      _memCod = codigo; _memDatos = datos;
+      try { const nv = await dietVersion(codigo); _memVer = (nv && nv !== '__unknown__') ? nv : ''; }
+      catch (e) { _memVer = ''; }
+    }
+    return _guardo;
   } catch (e) { return false; }
 }
 
